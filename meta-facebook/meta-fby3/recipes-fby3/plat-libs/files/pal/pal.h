@@ -50,10 +50,16 @@ extern "C" {
 // Baseboard PFR
 #define CPLD_UPDATE_ADDR (0x40)
 #define UFM_PROVISIONED_MSK 0x20
+#define INTENT_UPDATE_AT_RESET_MASK 0x80
 
 #define PFR_I2C_FILTER_OFFSET 0x10
 #define DISABLE_PFR_I2C_FILTER 0
 #define ENABLE_PFR_I2C_FILTER 1
+
+#define BIOS_CAP_VER_OFFSET 0x80C
+#define BIOS_CAP_VER_LEN 16
+#define CPLD_CAP_VER_OFFSET 0x404
+#define CPLD_CAP_VER_LEN 4
 
 extern const char pal_fru_list_print[];
 extern const char pal_fru_list_rw[];
@@ -152,6 +158,13 @@ enum {
   MAJOR_ERROR_UPDATE_FROM_BMC_FAILED=0x04,
 };
 
+enum {
+  BIOS_CAP_STAG_MAILBOX = 0xE0,
+  BIOS_CAP_RCVY_MAILBOX = 0xD0,
+  CPLD_CAP_STAG_MAILBOX = 0x64,
+  CPLD_CAP_RCVY_MAILBOX = 0x60,
+};
+
 typedef struct {
   uint8_t err_id;
   char *err_des;
@@ -168,6 +181,7 @@ int pal_handle_dcmi(uint8_t fru, uint8_t *tbuf, uint8_t tlen, uint8_t *rbuf, uin
 int pal_bypass_cmd(uint8_t slot, uint8_t *req_data, uint8_t req_len, uint8_t *res_data, uint8_t *res_len);
 int pal_check_pfr_mailbox(uint8_t fru);
 int set_pfr_i2c_filter(uint8_t slot_id, uint8_t value);
+int pal_check_sled_mgmt_cbl_id(uint8_t slot_id, uint8_t *cbl_val, bool log_evnt, uint8_t bmc_location);
 
 #ifdef __cplusplus
 } // extern "C"

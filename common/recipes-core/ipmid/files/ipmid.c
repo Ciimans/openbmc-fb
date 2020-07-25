@@ -553,7 +553,7 @@ app_get_device_id (unsigned char *request, unsigned char req_len,
   ipmi_res_t *res = (ipmi_res_t *) response;
   unsigned char *data = &res->data[0];
   FILE *fp=NULL;
-  int fv_major = 0x01, fv_minor = 0x03;
+  int fv_major = 0x01, fv_minor = 0x03, fv_patch = 0x00;
   char buffer[64];
 
   if(length_check(0, req_len, response, res_len))
@@ -567,7 +567,7 @@ app_get_device_id (unsigned char *request, unsigned char req_len,
     if (fgets(buffer, sizeof(buffer), fp)) {
       char *version = strstr(buffer, "-v");
       if (version != NULL) {
-        sscanf(version, "-v%d.%d", &fv_major, &fv_minor);
+        sscanf(version, "-v%d.%d.%d", &fv_major, &fv_minor, &fv_patch);
       }
     }
     fclose(fp);
@@ -595,10 +595,10 @@ app_get_device_id (unsigned char *request, unsigned char req_len,
   *data++ = 0x00;   // Manufacturer ID3
   *data++ = 0x46;   // Product ID1
   *data++ = 0x31;   // Product ID2
-  *data++ = 0x00;   // Aux. Firmware Version1
-  *data++ = 0x00;   // Aux. Firmware Version2
-  *data++ = 0x00;   // Aux. Firmware Version3
-  *data++ = 0x00;   // Aux. Firmware Version4
+  *data++ = (uint8_t) fv_patch; // Aux. Firmware Version1 (patch ver)
+  *data++ = 0x00;               // Aux. Firmware Version2
+  *data++ = 0x00;               // Aux. Firmware Version3
+  *data++ = 0x00;               // Aux. Firmware Version4
 
   *res_len = data - &res->data[0];
 }
@@ -3376,6 +3376,23 @@ oem_stor_add_string_sel(unsigned char *request, unsigned char req_len,
 }
 
 static void
+oem_set_bios_cap_fw_ver(unsigned char *request, unsigned char req_len,
+                   unsigned char *response, unsigned char *res_len)
+{
+  ipmi_mn_req_t *req = (ipmi_mn_req_t *) request;
+  ipmi_res_t *res = (ipmi_res_t *) response;
+  int ret;
+
+  ret = pal_set_bios_cap_fw_ver(req->payload_id, req->data, req_len, res->data, res_len);
+
+  if(ret == 0) {
+    res->cc = CC_SUCCESS;
+  } else {
+    res->cc = CC_UNSPECIFIED_ERROR;
+  }
+}
+
+static void
 ipmi_handle_oem (unsigned char *request, unsigned char req_len,
      unsigned char *response, unsigned char *res_len)
 {
@@ -3509,6 +3526,9 @@ ipmi_handle_oem (unsigned char *request, unsigned char req_len,
       break;
     case CMD_OEM_GET_SENSOR_REAL_READING:
       oem_get_sensor_real_reading(request, req_len, response, res_len);
+      break;
+    case CMD_OEM_SET_BIOS_CAP_FW_VER:
+      oem_set_bios_cap_fw_ver(request, req_len, response, res_len);
       break;
     default:
       res->cc = CC_INVALID_CMD;

@@ -17,27 +17,13 @@
  * Boston, MA 02110-1301 USA
  */
 
-package utils
+package flash_procedure
 
 import (
-	"log"
-	"runtime"
+	"github.com/facebook/openbmc/tools/flashy/lib/flash/flash_procedures"
+	"github.com/facebook/openbmc/tools/flashy/lib/utils"
 )
 
-type EntryPointMapType = map[string]func(string, string) StepExitError
-
-// maps from the sanitized binary name to the function to run
-// the file path keys are also used to symlink the paths (busybox style)
-var EntryPointMap = EntryPointMapType{}
-
-// registers endpoints into EntryPointMap
-func RegisterStepEntryPoint(step func(string, string) StepExitError) {
-	// get the filename 1 stack call above
-	_, filename, _, ok := runtime.Caller(1)
-	if !ok {
-		log.Fatalf("Unable to get filename for step.")
-	}
-
-	symlinkPath := GetSymlinkPathForSourceFile(filename)
-	EntryPointMap[symlinkPath] = step
+func init() {
+	utils.RegisterStep(flash_procedures.FlashCpVboot)
 }

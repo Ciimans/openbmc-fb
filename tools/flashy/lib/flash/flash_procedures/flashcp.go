@@ -28,24 +28,38 @@ import (
 	"github.com/pkg/errors"
 )
 
-func FlashCp(imageFilePath, deviceID string) utils.StepExitError {
-	log.Printf("Attempting to flash '%v' with image file '%v'", deviceID, imageFilePath)
-	log.Printf("Using legacy flash method (flashcp)")
+func FlashCp(stepParams utils.StepParams) utils.StepExitError {
+	log.Printf("Flashing using flashcp method")
+	log.Printf("Attempting to flash '%v' with image file '%v'",
+		stepParams.DeviceID, stepParams.ImageFilePath)
 
 	log.Printf("Getting flash target device")
-	flashDevice, err := flashutils.GetFlashDevice(deviceID)
+	flashDevice, err := flashutils.GetFlashDevice(stepParams.DeviceID)
 	if err != nil {
 		log.Printf(err.Error())
 		return utils.ExitSafeToReboot{err}
 	}
-	log.Printf("Gotten flash device: %v", *flashDevice)
+	log.Printf("Flash device: %v", *flashDevice)
 
-	flashCmd := []string{"flashcp", imageFilePath, flashDevice.FilePath}
+	// TODO:- image validation here
+
+	// run flashcp
+	flashCpErr := runFlashCpCmd(stepParams.ImageFilePath, flashDevice.FilePath)
+	return flashCpErr
+}
+
+var runFlashCpCmd = func(imageFilePath, flashDevicePath string) utils.StepExitError {
+	flashCmd := []string{
+		"flashcp", imageFilePath, flashDevicePath,
+	}
 
 	// timeout in 30 minutes
-	exitCode, err, _, _ := utils.RunCommand(flashCmd, 1800)
+	exitCode, err, stdout, stderr := utils.RunCommand(flashCmd, 1800)
 	if err != nil {
-		errMsg := fmt.Sprintf("Flashing failed with exit code %v, error: %v", exitCode, err)
+		errMsg := fmt.Sprintf(
+			"Flashing failed with exit code %v, error: %v, stdout: '%v', stderr: '%v'",
+			exitCode, err, stdout, stderr,
+		)
 		log.Printf(errMsg)
 		return utils.ExitSafeToReboot{errors.Errorf(errMsg)}
 	}

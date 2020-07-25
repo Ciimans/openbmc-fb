@@ -1227,6 +1227,9 @@ pal_get_custom_event_sensor_name(uint8_t fru, uint8_t sensor_num, char *name) {
         case BIC_SENSOR_PROC_FAIL:
           sprintf(name, "PROC_FAIL");
           break;
+        case BIC_SENSOR_SSD_HOT_PLUG:
+          sprintf(name, "SSD_HOT_PLUG");
+          break;
         default:
           sprintf(name, "Unknown");
           ret = PAL_ENOTSUP;
@@ -1502,6 +1505,45 @@ pal_parse_sys_sts_event(uint8_t fru, uint8_t *event_data, char *error_log) {
   return PAL_EOK;
 }
 
+static int
+pal_parse_ssd_hot_plug_event(uint8_t fru, uint8_t *event_data, char *error_log) {
+  enum {
+    SSD0 = 0x00,
+    SSD1 = 0x01,
+    SSD2 = 0x02,
+    SSD3 = 0x03,
+    SSD4 = 0x04,
+    SSD5 = 0x05,
+  };
+  uint8_t event = event_data[0];
+
+  switch (event) {
+    case SSD0:
+      strcat(error_log, "SSD0");
+      break;
+    case SSD1:
+      strcat(error_log, "SSD1");
+      break;
+    case SSD2:
+      strcat(error_log, "SSD2");
+      break;
+    case SSD3:
+      strcat(error_log, "SSD3");
+      break;
+    case SSD4:
+      strcat(error_log, "SSD4");
+      break;
+    case SSD5:
+      strcat(error_log, "SSD5");
+      break;
+    default:
+      strcat(error_log, "Undefined hot plug event");
+      break;
+  }
+
+  return PAL_EOK;
+}
+
 int
 pal_parse_sel(uint8_t fru, uint8_t *sel, char *error_log) {
   enum {
@@ -1526,6 +1568,9 @@ pal_parse_sel(uint8_t fru, uint8_t *sel, char *error_log) {
       break;
     case BIC_SENSOR_PROC_FAIL:
       pal_parse_proc_fail(fru, event_data, error_log);
+      break;
+    case BIC_SENSOR_SSD_HOT_PLUG:
+      pal_parse_ssd_hot_plug_event(fru, event_data, error_log);
       break;
     default:
       unknown_snr = true;
@@ -2123,6 +2168,7 @@ pal_fw_update_finished(uint8_t fru, const char *comp, int status) {
   int ret = 0;
   int ifd, retry = 3;
   uint8_t buf[16];
+  uint8_t rbuf[16];
   char dev_i2c[16];
   uint8_t bus, addr;
   bool bridged;
@@ -2154,6 +2200,18 @@ pal_fw_update_finished(uint8_t fru, const char *comp, int status) {
     printf("sending update intent to CPLD...\n");
     fflush(stdout);
     sleep(1);
+    do {
+      ret = i2c_rdwr_msg_transfer(ifd, addr, buf, 2, rbuf, 1);
+      if (ret) {
+        syslog(LOG_WARNING, "i2c%u xfer failed, cmd: %02x", addr, buf[0]);
+        if (--retry > 0) {
+          msleep(100);
+        }
+      }
+    } while (ret && retry > 0);
+
+    buf[1] |= rbuf[0];
+
     do {
       ret = i2c_rdwr_msg_transfer(ifd, addr, buf, 2, NULL, 0);
       if (ret) {
@@ -2380,7 +2438,6 @@ pal_get_nic_fru_id(void)
 int
 pal_check_pfr_mailbox(uint8_t fru) {
   int ret = 0, i2cfd = 0, retry=0, index = 0;
-  int cpld_bus = 0;
   uint8_t tbuf[1] = {0}, rbuf[1] = {0};
   uint8_t tlen = 1, rlen = 1;
   uint8_t major_err = 0, minor_err = 0;
@@ -2525,4 +2582,170 @@ set_pfr_i2c_filter(uint8_t slot_id, uint8_t value) {
 
   return 0;
 
+}
+
+int
+pal_check_sled_mgmt_cbl_id(uint8_t slot_id, uint8_t *cbl_val, bool log_evnt, uint8_t bmc_location) {
+  enum {
+    SLOT1_CBL = 0x03,
+    SLOT2_CBL = 0x02,
+    SLOT3_CBL = 0x01,
+    SLOT4_CBL = 0x00,
+  };
+  enum {
+    SLOT1_ID0_DETECT_BMC_N = 33,
+    SLOT1_ID1_DETECT_BMC_N = 34,
+    SLOT3_ID0_DETECT_BMC_N = 37,
+    SLOT3_ID1_DETECT_BMC_N = 38,
+  };
+  const uint8_t mapping_tbl[4] = {SLOT1_CBL, SLOT2_CBL, SLOT3_CBL, SLOT4_CBL};
+  const char *gpio_mgmt_cbl_tbl[] = {"SLOT%d_ID1_DETECT_BMC_N", "SLOT%d_ID0_DETECT_BMC_N"};
+  const int num_of_mgmt_pins = ARRAY_SIZE(gpio_mgmt_cbl_tbl);
+  int i = 0;
+  int ret = 0;
+  char dev[32] = {0};
+  uint8_t val = 0;
+  uint8_t gpio_vals = 0;
+  bic_gpio_t gpio = {0};
+  int i2cfd = 0;
+  char path[32] = {0};
+  uint8_t bus = 0;
+  uint8_t tbuf[1] = {0x06};
+  uint8_t rbuf[1] = {0};
+  uint8_t tlen = 1;
+  uint8_t rlen = 1;
+  uint8_t cpld_slot_cbl_val = 0;
+
+  if ( bmc_location == DVT_BB_BMC ) {
+    //read GPIO vals
+    for ( i = 0; i < num_of_mgmt_pins; i++ ) {
+      snprintf(dev, sizeof(dev), gpio_mgmt_cbl_tbl[i], slot_id);
+      if ( get_gpio_value(dev, &val) < 0 ) {
+        syslog(LOG_WARNING, "%s() Failed to read %s", __func__, dev);
+      }
+      gpio_vals |= (val << i);
+    }
+  } else {
+    //NIC EXP
+    //a bus starts from 4
+    ret = fby3_common_get_bus_id(slot_id) + 4;
+    if ( ret < 0 ) {
+      syslog(LOG_WARNING, "%s() Cannot get the bus with fru%d", __func__, slot_id);
+      return -1;
+    }
+
+    bus= (uint8_t)ret;
+    snprintf(path, sizeof(path), I2CDEV, bus);
+
+    //read 06h from SB CPLD
+    i2cfd = open(path, O_RDWR);
+    if ( i2cfd < 0 ) {
+      syslog(LOG_WARNING, "%s() Failed to open %s", __func__, path);
+      if ( i2cfd > 0 ) close(i2cfd);
+      return -1;
+    }
+
+    ret = i2c_rdwr_msg_transfer(i2cfd, (SB_CPLD_ADDR << 1), tbuf, tlen, rbuf, rlen);
+    if ( ret < 0 ) {
+      syslog(LOG_WARNING, "%s() Failed to do i2c_rdwr_msg_transfer, tlen=%d", __func__, tlen);
+      if ( i2cfd > 0 ) close(i2cfd);
+      return -1;
+    }
+
+    if ( i2cfd > 0 ) close(i2cfd);
+
+    cpld_slot_cbl_val = rbuf[0];
+
+     //read GPIO from BB BIC
+    ret = bic_get_gpio(slot_id, &gpio, BB_BIC_INTF);
+    if ( ret < 0 ) {
+      printf("%s() bic_get_gpio returns %d\n", __func__, ret);
+      return ret;
+    }
+    if (cpld_slot_cbl_val == SLOT1_CBL) {
+      val = BIT_VALUE(gpio, SLOT1_ID1_DETECT_BMC_N);
+      gpio_vals |= (val << 0);
+      val = BIT_VALUE(gpio, SLOT1_ID0_DETECT_BMC_N);
+      gpio_vals |= (val << 1);
+    } else {
+      val = BIT_VALUE(gpio, SLOT3_ID1_DETECT_BMC_N);
+      gpio_vals |= (val << 0);
+      val = BIT_VALUE(gpio, SLOT3_ID0_DETECT_BMC_N);
+      gpio_vals |= (val << 1);
+    }
+  }
+
+  bool vals_match = (bmc_location == DVT_BB_BMC) ? (gpio_vals == mapping_tbl[slot_id-1]):(gpio_vals == cpld_slot_cbl_val);
+  if ( (log_evnt == true) && (vals_match == false) ) {
+    for ( i = 0; i < (sizeof(mapping_tbl)/sizeof(uint8_t)); i++ ) {
+      if(mapping_tbl[i] == gpio_vals) {
+        break;
+      }
+    }
+    syslog(LOG_CRIT, "The cable of slot%d should be plugged to slot%d", slot_id, (i+1));
+  }
+
+  if ( cbl_val != NULL ) *cbl_val = (vals_match == false)?STATUS_ABNORMAL:STATUS_PRSNT;
+  return ret;
+}
+
+int pal_set_bios_cap_fw_ver(uint8_t slot, uint8_t *req_data, uint8_t req_len, uint8_t *res_data, uint8_t *res_len) {
+  uint8_t *data = res_data;
+  int i2cfd = 0, ret = 0;
+  uint8_t bmc_location = 0;
+  uint8_t status;
+  uint8_t len;
+  uint8_t bus;
+  uint8_t retry = 0;
+  char path[128] = {0};
+  uint32_t ver_reg = BIOS_CAP_STAG_MAILBOX;
+  uint8_t tbuf[18] = {0};
+  uint8_t tlen = BIOS_CAP_VER_LEN;
+
+  ret = fby3_common_check_slot_id(slot);
+  if (ret < 0 ) {
+    ret = PAL_ENOTSUP;
+    goto error_exit;
+  }
+
+  ret = pal_is_fru_prsnt(slot, &status);
+  if ( ret < 0 || status == 0 ) {
+    ret = PAL_ENOTREADY;
+    goto error_exit;
+  }
+
+  ret = fby3_common_get_bus_id(slot) + 4;
+  if ( ret < 0 ) {
+    syslog(LOG_WARNING, "%s() Cannot get the bus with fru%d", __func__, slot);
+    goto error_exit;
+  }
+
+  bus= (uint8_t)ret;
+  snprintf(path, sizeof(path), I2CDEV, bus);
+  if ((i2cfd = open(path, O_RDWR)) < 0) {
+    printf("Failed to open %s\n", path);
+    goto error_exit;
+  }
+
+  memcpy(tbuf, (uint8_t *)&ver_reg, 1);
+  memcpy(&tbuf[1], req_data, tlen);
+  tlen = tlen + 1;
+
+  while (retry < MAX_READ_RETRY) {
+    ret = i2c_rdwr_msg_transfer(i2cfd, CPLD_INTENT_CTRL_ADDR, tbuf, tlen, NULL, 0);
+    if ( ret < 0 ) {
+      retry++;
+      sleep(1);
+    } else {
+      break;
+    }
+  }
+  if (retry == MAX_READ_RETRY) {
+    syslog(LOG_WARNING, "%s() Failed to do i2c_rdwr_msg_transfer, tlen=%d", __func__, tlen);
+  }
+
+error_exit:
+  if ( i2cfd > 0 ) close(i2cfd);
+  *res_len = 0;
+  return ret;
 }

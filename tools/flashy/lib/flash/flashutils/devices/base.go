@@ -24,7 +24,6 @@ type FlashDevice struct {
 	Specifier string
 	FilePath  string
 	FileSize  uint64
-	Offset    uint64
 }
 
 // takes in the specifier and returns the FlashDevice
