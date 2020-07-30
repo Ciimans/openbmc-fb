@@ -1,4 +1,6 @@
-# Copyright 2014-present Facebook. All Rights Reserved.
+#!/bin/sh
+#
+# Copyright 2020-present Facebook. All Rights Reserved.
 #
 # This program file is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
@@ -14,14 +16,6 @@
 # Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor,
 # Boston, MA 02110-1301 USA
+#
 
-lib: libalert_control.so
-
-libalert_control.so: alert_control.c
-	$(CC) $(CFLAGS) -fPIC -c -o alert_control.o alert_control.c
-	$(CC) -shared -o libalert_control.so alert_control.o -lc $(LDFLAGS)
-
-.PHONY: clean
-
-clean:
-	rm -rf *.o libalert_control.so
+exec /usr/local/bin/ipmbd 0 1

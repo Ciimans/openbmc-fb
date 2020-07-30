@@ -27,6 +27,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/facebook/openbmc/tools/flashy/lib/fileutils"
 	"github.com/facebook/openbmc/tools/flashy/lib/flash/flashutils/devices"
 	"github.com/facebook/openbmc/tools/flashy/lib/utils"
 	"github.com/facebook/openbmc/tools/flashy/tests"
@@ -41,19 +42,19 @@ type partialRunCommandReturn struct {
 func TestGetVbootUtilContents(t *testing.T) {
 	// mock and defer restore RemoveFile, RunCommand, IsVbootSystem and
 	// IsELFFile
-	removeFileOrig := utils.RemoveFile
+	removeFileOrig := fileutils.RemoveFile
 	runCommandOrig := utils.RunCommand
 	isVbootSystemOrig := isVbootSystem
-	isELFFileOrig := utils.IsELFFile
+	isELFFileOrig := fileutils.IsELFFile
 	defer func() {
-		utils.RemoveFile = removeFileOrig
+		fileutils.RemoveFile = removeFileOrig
 		utils.RunCommand = runCommandOrig
 		isVbootSystem = isVbootSystemOrig
-		utils.IsELFFile = isELFFileOrig
+		fileutils.IsELFFile = isELFFileOrig
 	}()
 
 	// removeFile is mocked to return nil
-	utils.RemoveFile = func(_ string) error {
+	fileutils.RemoveFile = func(_ string) error {
 		return nil
 	}
 
@@ -125,7 +126,7 @@ func TestGetVbootUtilContents(t *testing.T) {
 				stdout := tc.runCmdRet.stdout
 				return 0, retErr, stdout, ""
 			}
-			utils.IsELFFile = func(filename string) bool {
+			fileutils.IsELFFile = func(filename string) bool {
 				if filename != vbootUtilPath {
 					t.Errorf("want vboot util path '%v' got '%v'", vbootUtilPath, filename)
 				}
@@ -147,11 +148,11 @@ func TestGetVbootUtilContents(t *testing.T) {
 func TestGetVbootEnforcement(t *testing.T) {
 	// mock and defer restore IsVbootSystem, ReadFile and getVbootUtilContents
 	isVbootSystemOrig := isVbootSystem
-	readFileOrig := utils.ReadFile
+	readFileOrig := fileutils.ReadFile
 	getVbootUtilContentsOrig := getVbootUtilContents
 	defer func() {
 		isVbootSystem = isVbootSystemOrig
-		utils.ReadFile = readFileOrig
+		fileutils.ReadFile = readFileOrig
 		getVbootUtilContents = getVbootUtilContentsOrig
 	}()
 
@@ -233,7 +234,7 @@ Flags software_enforce:  0x01`,
 			isVbootSystem = func() bool {
 				return tc.isVbootSystem
 			}
-			utils.ReadFile = func(filename string) ([]byte, error) {
+			fileutils.ReadFile = func(filename string) ([]byte, error) {
 				if filename != utils.ProcMtdFilePath {
 					t.Errorf("filename: want '%v' got '%v'",
 						utils.ProcMtdFilePath, filename)
@@ -252,66 +253,102 @@ Flags software_enforce:  0x01`,
 	}
 }
 
+type mockFlashDevice struct {
+	ReadErr error
+	devices.FlashDevice
+}
+
+func (m mockFlashDevice) MmapRO() ([]byte, error) {
+	return []byte{'t', 'e', 's', 't'}, m.ReadErr
+}
+
+func (m mockFlashDevice) Munmap(b []byte) error {
+	return nil
+}
+
+func (m mockFlashDevice) GetFileSize() uint64 {
+	return uint64(4)
+}
+
 func TestPatchImageWithLocalBootloader(t *testing.T) {
 	// save log output into buf for testing
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
-	// mock and defer restore ReplaceFirstNBytes
-	replaceFirstNBytesOrig := utils.ReplaceFirstNBytes
+	// mock and defer restore WriteFileWithoutTruncate
+	writeFileOrig := fileutils.WriteFileWithoutTruncate
 	defer func() {
 		log.SetOutput(os.Stderr)
-		utils.ReplaceFirstNBytes = replaceFirstNBytesOrig
+		fileutils.WriteFileWithoutTruncate = writeFileOrig
 	}()
 	const imageFilePath = "imageFilePath"
 	const flashDevicePath = "flashDevicePath"
-	const testOffset = 42
 
 	cases := []struct {
-		name             string
-		replaceNBytesErr error
-		logContainsSeq   []string
-		want             error
+		name               string
+		offsetBytes        int
+		flashDeviceReadErr error
+		writeImgFileErr    error
+		logContainsSeq     []string
+		want               error
 	}{
 		{
-			name:             "patch success",
-			replaceNBytesErr: nil,
+			name:               "patch success",
+			offsetBytes:        2,
+			flashDeviceReadErr: nil,
+			writeImgFileErr:    nil,
 			logContainsSeq: []string{
 				"===== WARNING: PATCHING IMAGE FILE =====",
-				"This vboot system has 42B RO offset in mtd, patching image file with offset.",
+				"This vboot system has 2B RO offset in mtd, patching image file with offset.",
 				"Successfully patched image file",
 			},
 			want: nil,
 		},
 		{
-			name:             "patch failed",
-			replaceNBytesErr: errors.Errorf("Unable to replace bytes"),
-			logContainsSeq:   []string{},
-			want:             errors.Errorf("Unable to patch image: Unable to replace bytes"),
+			name:               "patch failed (can't read from flash device)",
+			offsetBytes:        2,
+			flashDeviceReadErr: errors.Errorf("can't read from flash device"),
+			writeImgFileErr:    nil,
+			logContainsSeq:     []string{},
+			want: errors.Errorf("Unable to patch image: Can't read from flash device: " +
+				"can't read from flash device"),
+		},
+		{
+			name:               "offset bytes larger than image",
+			offsetBytes:        12,
+			flashDeviceReadErr: nil,
+			writeImgFileErr:    nil,
+			logContainsSeq:     []string{},
+			want: errors.Errorf("Unable to patch image: offset bytes required (%vB) larger than"+
+				"image file size (%vB)", 12, 4),
+		},
+		{
+			name:               "can't write to image file",
+			offsetBytes:        2,
+			flashDeviceReadErr: nil,
+			writeImgFileErr:    errors.Errorf("write img error"),
+			logContainsSeq:     []string{},
+			want:               errors.Errorf("Unable to patch image file 'imageFilePath': write img error"),
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			buf = bytes.Buffer{}
-			utils.ReplaceFirstNBytes = func(dstPath, srcPath string, n int) error {
-				if dstPath != imageFilePath {
-					t.Errorf("dstPath: want '%v' got '%v'", imageFilePath, dstPath)
+			fileutils.WriteFileWithoutTruncate = func(filename string, buf []byte) error {
+				if filename != imageFilePath {
+					t.Errorf("filename: want '%v' got '%v'", imageFilePath, filename)
 				}
-				if srcPath != flashDevicePath {
-					t.Errorf("srcPath: want '%v' got '%v'", flashDevicePath, srcPath)
-				}
-				if n != testOffset {
-					t.Errorf("n: want '%v' got '%v'", testOffset, n)
-				}
-				return tc.replaceNBytesErr
+				return tc.writeImgFileErr
 			}
-			got := patchImageWithLocalBootloader(imageFilePath, flashDevicePath, testOffset)
+			mockFD := mockFlashDevice{
+				tc.flashDeviceReadErr,
+				nil,
+			}
+			got := patchImageWithLocalBootloader(imageFilePath, mockFD, tc.offsetBytes)
 
 			tests.CompareTestErrors(tc.want, got, t)
 			tests.LogContainsSeqTest(buf.String(), tc.logContainsSeq, t)
 		})
-
 	}
-
 }
 
 func TestIsVbootImagePatchingRequired(t *testing.T) {
@@ -395,8 +432,7 @@ func TestVbootPatchImageBootloaderIfNeeded(t *testing.T) {
 		patchImageWithLocalBootloader = patchImageWithLocalBootloaderOrig
 	}()
 
-	exampleFlashDevice := &devices.FlashDevice{
-		"mtd",
+	exampleFlashDevice := devices.MemoryTechnologyDevice{
 		"flash1",
 		"/dev/mtd5",
 		uint64(42),
@@ -464,12 +500,9 @@ func TestVbootPatchImageBootloaderIfNeeded(t *testing.T) {
 				}
 				return tc.patchRequired, tc.patchRequiredErr
 			}
-			patchImageWithLocalBootloader = func(imageFilePath, flashDeviceFilePath string, offsetBytes int) error {
+			patchImageWithLocalBootloader = func(imageFilePath string, flashDevice devices.FlashDevice, offsetBytes int) error {
 				if imageFilePath != "x" {
 					t.Errorf("image file path: want 'x' got '%v'", imageFilePath)
-				}
-				if flashDeviceFilePath != "/dev/mtd5" {
-					t.Errorf("image file path: want '/dev/mtd5' got '%v'", flashDeviceFilePath)
 				}
 				if offsetBytes != vbootOffset {
 					t.Errorf("offsetBytes: want '%v' got '%v'", vbootOffset, offsetBytes)

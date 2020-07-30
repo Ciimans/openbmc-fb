@@ -17,16 +17,23 @@
  * Boston, MA 02110-1301 USA
  */
 
-package utils
+package step
 
 import (
+	"encoding/json"
 	"log"
+	"os"
 	"runtime"
+
+	"github.com/facebook/openbmc/tools/flashy/lib/fileutils"
+	_ "github.com/facebook/openbmc/tools/flashy/lib/utils"
 )
 
 type StepParams struct {
+	Install       bool
 	ImageFilePath string
 	DeviceID      string
+	Clowntown     bool
 }
 
 type stepMapType = map[string]func(StepParams) StepExitError
@@ -43,6 +50,18 @@ func RegisterStep(step func(StepParams) StepExitError) {
 		log.Fatalf("Unable to get filename for step.")
 	}
 
-	symlinkPath := GetSymlinkPathForSourceFile(filename)
+	symlinkPath := fileutils.GetSymlinkPathForSourceFile(filename)
 	StepMap[symlinkPath] = step
+}
+
+// encode exit error
+func encodeExitError(err StepExitError) {
+	enc := json.NewEncoder(os.Stderr)
+
+	var ae = struct {
+		Reason string `json:"message"`
+	}{
+		Reason: err.GetError(),
+	}
+	enc.Encode(ae)
 }

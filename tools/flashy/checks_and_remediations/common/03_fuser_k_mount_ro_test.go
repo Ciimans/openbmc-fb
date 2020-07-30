@@ -25,8 +25,8 @@ import (
 	"testing"
 
 	"github.com/facebook/openbmc/tools/flashy/lib/flash/flashutils/devices"
+	"github.com/facebook/openbmc/tools/flashy/lib/step"
 	"github.com/facebook/openbmc/tools/flashy/lib/utils"
-	"github.com/facebook/openbmc/tools/flashy/tests"
 	"github.com/pkg/errors"
 )
 
@@ -46,7 +46,7 @@ func TestFuserKMountRo(t *testing.T) {
 		writableMountedMTDsErr error
 		fuserCmdErr            error
 		remountCmdErr          error
-		want                   utils.StepExitError
+		want                   step.StepExitError
 		wantCmds               []string
 	}{
 		{
@@ -104,7 +104,7 @@ func TestFuserKMountRo(t *testing.T) {
 			writableMountedMTDsErr: errors.Errorf("GetWritableMountedMTDs error"),
 			fuserCmdErr:            nil,
 			remountCmdErr:          nil,
-			want:                   utils.ExitSafeToReboot{errors.Errorf("GetWritableMountedMTDs error")},
+			want:                   step.ExitSafeToReboot{errors.Errorf("GetWritableMountedMTDs error")},
 			wantCmds:               []string{},
 		},
 		{
@@ -118,7 +118,7 @@ func TestFuserKMountRo(t *testing.T) {
 			writableMountedMTDsErr: nil,
 			fuserCmdErr:            errors.Errorf("fuser failed"),
 			remountCmdErr:          nil,
-			want: utils.ExitSafeToReboot{
+			want: step.ExitSafeToReboot{
 				errors.Errorf("Fuser command [fuser -km /mnt/data] failed: fuser failed"),
 			},
 			wantCmds: []string{
@@ -136,7 +136,7 @@ func TestFuserKMountRo(t *testing.T) {
 			writableMountedMTDsErr: nil,
 			fuserCmdErr:            nil,
 			remountCmdErr:          errors.Errorf("remount failed"),
-			want: utils.ExitSafeToReboot{
+			want: step.ExitSafeToReboot{
 				errors.Errorf("Remount command [mount -o remount,ro /dev/mtdblock4 /mnt/data] failed: remount failed"),
 			},
 			wantCmds: []string{
@@ -166,9 +166,9 @@ func TestFuserKMountRo(t *testing.T) {
 				return 0, tc.remountCmdErr, "", ""
 			}
 
-			got := fuserKMountRo(utils.StepParams{"x", "x"})
+			got := fuserKMountRo(step.StepParams{false, "x", "x", false})
 
-			tests.CompareTestExitErrors(tc.want, got, t)
+			step.CompareTestExitErrors(tc.want, got, t)
 
 			if !reflect.DeepEqual(gotCmds, tc.wantCmds) {
 				t.Errorf("commands: want '%#v' got '%#v'", tc.wantCmds, gotCmds)

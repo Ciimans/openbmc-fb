@@ -21,16 +21,17 @@ PR = "r1"
 LICENSE = "GPLv2"
 LIC_FILES_CHKSUM = "file://sms-kcsd.c;beginline=12;endline=24;md5=da35978751a9d71b73679307c4d296ec"
 
-
 DEPENDS_append = " update-rc.d-native"
 
-DEPENDS += "libalert-control"
-DEPENDS += "libipmi"
-RDEPENDS_${PN} += "libalert-control libipmi"
+LDFLAGS += "-lipmi -lobmc-i2c"
+DEPENDS += "libipmi libobmc-i2c"
+RDEPENDS_${PN} += "libipmi libobmc-i2c"
 
 SRC_URI = "file://Makefile \
            file://setup-sms-kcs.sh \
            file://sms-kcsd.c \
+           file://alert_control.c \
+           file://alert_control.h \
           "
 
 S = "${WORKDIR}"
